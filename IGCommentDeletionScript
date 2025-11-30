@@ -86,13 +86,10 @@
 
         let checkboxes = document.querySelectorAll('[aria-label="Toggle checkbox"]')
         if (checkboxes.length === 0) {
-          const gotMore = await scrollAndWaitForMoreComments(0)
-          if (!gotMore) {
-            console.log('🚫 No more comments to delete.')
-            break
-          }
-          continue
-        }
+          await scrollAndWaitForMoreComments(0)
+          continue // keep looping forever
+        s}
+
 
         await delay(DELAY_AFTER_COMMENTS_VISIBLE_MS) // Wait before starting selection
 
