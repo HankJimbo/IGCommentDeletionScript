@@ -126,4 +126,34 @@
 
         let checkboxes = document.querySelectorAll('[aria-label="Toggle checkbox"]')
         if (checkboxes.length === 0) {
-          // No "no more comments" break —
+          // No "no more comments" break — just keep trying
+          await scrollAndWaitForMoreComments(0)
+          continue
+        }
+
+        await delay(DELAY_AFTER_COMMENTS_VISIBLE_MS)
+
+        const batchSize = Math.min(DELETION_BATCH_SIZE, checkboxes.length)
+        for (let i = 0; i < batchSize; i++) {
+          await clickElement(checkboxes[i])
+          await delay(DELAY_BETWEEN_CHECKBOX_CLICKS_MS)
+        }
+
+        await delay(DELAY_BETWEEN_ACTIONS_MS)
+        await deleteSelectedComments()
+        await delay(DELAY_BETWEEN_ACTIONS_MS)
+
+        console.log('♻️ Finished one delete batch, continuing...')
+      }
+    } catch (error) {
+      console.error('Error in deleteActivity:', error.message)
+    }
+  }
+
+  // Start script
+  try {
+    await deleteActivity()
+  } catch (error) {
+    console.error('Fatal error:', error.message)
+  }
+})()
