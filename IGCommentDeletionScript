@@ -1,9 +1,16 @@
+/**
+ * Instagram Comment Auto-Deletion Script (infinite loop version)
+ * - Runs until you stop it manually
+ * - Handles "OK" error dialog and resumes
+ * - Uses <span>Select</span> detection instead of guessing buttons
+ */
+
 ;(async function () {
   const DELETION_BATCH_SIZE = 12
   const DELAY_BETWEEN_ACTIONS_MS = 1500
   const DELAY_BETWEEN_CHECKBOX_CLICKS_MS = 300
-  const DELAY_AFTER_SELECT_CLICK_MS = 8000 // NEW: Delay after clicking "Select"
-  const DELAY_AFTER_COMMENTS_VISIBLE_MS = 2000 // Wait before starting selection
+  const DELAY_AFTER_SELECT_CLICK_MS = 8000
+  const DELAY_AFTER_COMMENTS_VISIBLE_MS = 2000
   const MAX_RETRIES = 60
 
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -24,7 +31,7 @@
     element.click()
   }
 
-  // 🔹 NEW: find the actual "Select" control by its <span>Select</span>
+  // Find the "Select" control via its <span>Select</span>
   const getSelectControl = () => {
     const spans = Array.from(document.querySelectorAll('span'))
     const selectSpan = spans.find(
@@ -34,8 +41,7 @@
     )
 
     if (!selectSpan) return null
-
-    // If it's wrapped in a button or role=button element, click that; otherwise click the span itself
+    // Prefer a clickable ancestor, fall back to the span itself
     return selectSpan.closest('button, [role="button"]') || selectSpan
   }
 
@@ -48,19 +54,48 @@
     throw new Error('Select button not found after maximum retries')
   }
 
+  // Click the "OK" dialog and log it, if present
+  const clickOkIfPresent = async () => {
+    const okCandidates = Array.from(
+      document.querySelectorAll('div, span, button')
+    ).filter((el) => el.textContent.trim() === 'OK')
+
+    if (okCandidates.length > 0) {
+      try {
+        console.log('❌ Failed to delete — OK dialog appeared')
+        await clickElement(okCandidates[0])
+        await delay(1000)
+        return true
+      } catch (e) {
+        console.warn('⚠️ Detected OK dialog but clicking failed:', e.message)
+      }
+    }
+    return false
+  }
+
   const deleteSelectedComments = async () => {
     try {
-      const deleteButton = [...document.querySelectorAll('span')]
+      // Find the "Delete" control (span with text Delete/Löschen)
+      const deleteButton = Array.from(document.querySelectorAll('span'))
         .find(el => ['Delete', 'Löschen'].includes(el.textContent.trim()))
 
       if (!deleteButton) throw new Error('Delete button not found')
       await clickElement(deleteButton)
       await delay(DELAY_BETWEEN_ACTIONS_MS)
 
+      // If Instagram pops the "Something went wrong → OK" dialog:
+      if (await clickOkIfPresent()) {
+        // Abort this deletion attempt; outer loop will continue
+        return
+      }
+
+      // Normal case: a confirmation button is shown
       const confirmButton = await waitForElement('button[tabindex="0"]')
       await clickElement(confirmButton)
     } catch (error) {
       console.error('Error during comment deletion:', error.message)
+      // Try to clear any OK dialog and move on
+      await clickOkIfPresent()
     }
   }
 
@@ -77,43 +112,18 @@
   const deleteActivity = async () => {
     try {
       while (true) {
-        // 🔹 CHANGED: explicitly wait for the "Select" span-based control
+        // Small breather to avoid pegging CPU
+        await delay(500)
+
+        // Clear any stray OK dialog first
+        await clickOkIfPresent()
+
         const selectButton = await waitForSelectButton()
         if (!selectButton) throw new Error('Select button not found')
 
         await clickElement(selectButton)
-        await delay(DELAY_AFTER_SELECT_CLICK_MS) // Wait for comments to load
+        await delay(DELAY_AFTER_SELECT_CLICK_MS)
 
         let checkboxes = document.querySelectorAll('[aria-label="Toggle checkbox"]')
         if (checkboxes.length === 0) {
-          await scrollAndWaitForMoreComments(0)
-          continue // keep looping forever
-        s}
-
-
-        await delay(DELAY_AFTER_COMMENTS_VISIBLE_MS) // Wait before starting selection
-
-        for (let i = 0; i < Math.min(DELETION_BATCH_SIZE, checkboxes.length); i++) {
-          await clickElement(checkboxes[i])
-          await delay(DELAY_BETWEEN_CHECKBOX_CLICKS_MS)
-        }
-
-        await delay(DELAY_BETWEEN_ACTIONS_MS)
-        await deleteSelectedComments()
-        await delay(DELAY_BETWEEN_ACTIONS_MS)
-        await waitForSelectButton()
-        await delay(DELAY_BETWEEN_ACTIONS_MS)
-      }
-    } catch (error) {
-      console.error('Error in deleteActivity:', error.message)
-    }
-  }
-
-  // Start script
-  try {
-    await deleteActivity()
-    console.log('✅ All comments deleted or none left to delete.')
-  } catch (error) {
-    console.error('Fatal error:', error.message)
-  }
-})()
+          // No "no more comments" break —
