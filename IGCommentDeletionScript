@@ -1,0 +1,122 @@
+;(async function () {
+  const DELETION_BATCH_SIZE = 12
+  const DELAY_BETWEEN_ACTIONS_MS = 1500
+  const DELAY_BETWEEN_CHECKBOX_CLICKS_MS = 300
+  const DELAY_AFTER_SELECT_CLICK_MS = 8000 // NEW: Delay after clicking "Select"
+  const DELAY_AFTER_COMMENTS_VISIBLE_MS = 2000 // Wait before starting selection
+  const MAX_RETRIES = 60
+
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  const waitForElement = async (selector, timeout = 30000) => {
+    const startTime = Date.now()
+    while (Date.now() - startTime < timeout) {
+      const element = document.querySelector(selector)
+      if (element) return element
+      await delay(100)
+    }
+    throw new Error(`Element with selector "${selector}" not found within ${timeout}ms`)
+  }
+
+  const clickElement = async (element) => {
+    if (!element) throw new Error('Element not found')
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    element.click()
+  }
+
+  // 🔹 NEW: find the actual "Select" control by its <span>Select</span>
+  const getSelectControl = () => {
+    const spans = Array.from(document.querySelectorAll('span'))
+    const selectSpan = spans.find(
+      (el) =>
+        el.textContent.trim() === 'Select' &&
+        el.getAttribute('data-bloks-name') === 'bk.components.Text'
+    )
+
+    if (!selectSpan) return null
+
+    // If it's wrapped in a button or role=button element, click that; otherwise click the span itself
+    return selectSpan.closest('button, [role="button"]') || selectSpan
+  }
+
+  const waitForSelectButton = async () => {
+    for (let i = 0; i < MAX_RETRIES; i++) {
+      const selectControl = getSelectControl()
+      if (selectControl) return selectControl
+      await delay(500)
+    }
+    throw new Error('Select button not found after maximum retries')
+  }
+
+  const deleteSelectedComments = async () => {
+    try {
+      const deleteButton = [...document.querySelectorAll('span')]
+        .find(el => ['Delete', 'Löschen'].includes(el.textContent.trim()))
+
+      if (!deleteButton) throw new Error('Delete button not found')
+      await clickElement(deleteButton)
+      await delay(DELAY_BETWEEN_ACTIONS_MS)
+
+      const confirmButton = await waitForElement('button[tabindex="0"]')
+      await clickElement(confirmButton)
+    } catch (error) {
+      console.error('Error during comment deletion:', error.message)
+    }
+  }
+
+  const scrollAndWaitForMoreComments = async (previousCount) => {
+    window.scrollTo(0, document.body.scrollHeight)
+    for (let i = 0; i < 10; i++) {
+      await delay(1000)
+      const currentCount = document.querySelectorAll('[aria-label="Toggle checkbox"]').length
+      if (currentCount > previousCount) return true
+    }
+    return false
+  }
+
+  const deleteActivity = async () => {
+    try {
+      while (true) {
+        // 🔹 CHANGED: explicitly wait for the "Select" span-based control
+        const selectButton = await waitForSelectButton()
+        if (!selectButton) throw new Error('Select button not found')
+
+        await clickElement(selectButton)
+        await delay(DELAY_AFTER_SELECT_CLICK_MS) // Wait for comments to load
+
+        let checkboxes = document.querySelectorAll('[aria-label="Toggle checkbox"]')
+        if (checkboxes.length === 0) {
+          const gotMore = await scrollAndWaitForMoreComments(0)
+          if (!gotMore) {
+            console.log('🚫 No more comments to delete.')
+            break
+          }
+          continue
+        }
+
+        await delay(DELAY_AFTER_COMMENTS_VISIBLE_MS) // Wait before starting selection
+
+        for (let i = 0; i < Math.min(DELETION_BATCH_SIZE, checkboxes.length); i++) {
+          await clickElement(checkboxes[i])
+          await delay(DELAY_BETWEEN_CHECKBOX_CLICKS_MS)
+        }
+
+        await delay(DELAY_BETWEEN_ACTIONS_MS)
+        await deleteSelectedComments()
+        await delay(DELAY_BETWEEN_ACTIONS_MS)
+        await waitForSelectButton()
+        await delay(DELAY_BETWEEN_ACTIONS_MS)
+      }
+    } catch (error) {
+      console.error('Error in deleteActivity:', error.message)
+    }
+  }
+
+  // Start script
+  try {
+    await deleteActivity()
+    console.log('✅ All comments deleted or none left to delete.')
+  } catch (error) {
+    console.error('Fatal error:', error.message)
+  }
+})()
